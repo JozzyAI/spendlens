@@ -12,7 +12,7 @@ export default function HomePage() {
   const router = useRouter();
 
   async function processFile(file: File) {
-    if (!file.name.endsWith(".csv")) {
+    if (!file.name.toLowerCase().endsWith(".csv")) {
       setError("Please upload a CSV file. PDF support coming soon.");
       return;
     }
@@ -22,12 +22,15 @@ export default function HomePage() {
       const form = new FormData();
       form.append("file", file);
       const res = await fetch("/api/parse", { method: "POST", body: form });
-      if (!res.ok) throw new Error("Parse failed");
+      if (!res.ok) {
+        const result = (await res.json().catch(() => null)) as { error?: string } | null;
+        throw new Error(result?.error || "Failed to parse the CSV");
+      }
       const data = await res.json();
       sessionStorage.setItem("spendlens_data", JSON.stringify(data));
       router.push("/dashboard");
-    } catch {
-      setError("Failed to parse the file. Please ensure it is a valid bank statement CSV.");
+    } catch (error) {
+      setError(error instanceof Error ? error.message : "Failed to parse the CSV.");
     } finally {
       setLoading(false);
     }
@@ -164,7 +167,7 @@ export default function HomePage() {
             {
               icon: <Shield className="w-6 h-6 text-indigo-500" />,
               title: "Privacy First",
-              desc: "No bank login required. Your data stays in your browser session.",
+              desc: "No bank login required. Uploaded CSV files are never retained.",
             },
           ].map((f) => (
             <div key={f.title} className="bg-white border rounded-xl p-6">
@@ -177,7 +180,7 @@ export default function HomePage() {
 
         <p className="text-center text-xs text-gray-400 mt-12">
           <FileText className="w-3 h-3 inline mr-1" />
-          Data processed locally. CSV files are not stored on our servers.
+          CSV files are processed transiently and are not stored on our servers.
         </p>
       </div>
     </main>

@@ -16,14 +16,31 @@ function findColumn(row: RawRow, candidates: string[]): string | undefined {
 
 function parseAmount(raw: string | undefined): number {
   if (!raw) return 0;
-  return parseFloat(raw.replace(/[$,\s]/g, "")) || 0;
+  const trimmed = raw.trim();
+  const negative = /^\(.*\)$/.test(trimmed) || /-$/.test(trimmed);
+  const amount = Number.parseFloat(trimmed.replace(/[()$,\s]/g, "").replace(/-$/, ""));
+  if (!Number.isFinite(amount)) return 0;
+  return negative ? -Math.abs(amount) : amount;
 }
 
 function parseDate(raw: string | undefined): string {
   if (!raw) return new Date().toISOString().slice(0, 10);
-  const d = new Date(raw.trim());
-  if (!isNaN(d.getTime())) return d.toISOString().slice(0, 10);
-  return raw.trim();
+  const value = raw.trim();
+  const isoMatch = value.match(/^(\d{4})[-/](\d{1,2})[-/](\d{1,2})/);
+  const usMatch = value.match(/^(\d{1,2})[/-](\d{1,2})[/-](\d{2}|\d{4})$/);
+
+  if (isoMatch) {
+    const [, year, month, day] = isoMatch;
+    return `${year}-${month.padStart(2, "0")}-${day.padStart(2, "0")}`;
+  }
+
+  if (usMatch) {
+    const [, month, day, rawYear] = usMatch;
+    const year = rawYear.length === 2 ? `20${rawYear}` : rawYear;
+    return `${year}-${month.padStart(2, "0")}-${day.padStart(2, "0")}`;
+  }
+
+  return value;
 }
 
 let idCounter = 0;
@@ -66,8 +83,8 @@ export function normalizeRows(rows: RawRow[]): NormalizedTransaction[] {
           type = cat === "Income" ? "credit" : "debit";
         }
       } else if (debitCol || creditCol) {
-        const debit = debitCol ? parseAmount(row[debitCol]) : 0;
-        const credit = creditCol ? parseAmount(row[creditCol]) : 0;
+        const debit = debitCol ? Math.abs(parseAmount(row[debitCol])) : 0;
+        const credit = creditCol ? Math.abs(parseAmount(row[creditCol])) : 0;
         if (debit > 0) {
           amount = debit;
           type = "debit";
@@ -115,7 +132,17 @@ export function computeSummary(txns: NormalizedTransaction[]) {
     .map(([merchant, total]) => ({ merchant, total }));
 
   const topTransactions = [...spending].sort((a, b) => b.amount - a.amount).slice(0, 10);
-  const subscriptions = txns.filter((t) => t.isRecurring && t.type === "debit");
+  const subscriptions = Object.values(
+    txns
+      .filter((t) => t.isRecurring && t.type === "debit")
+      .reduce<Record<string, NormalizedTransaction>>((unique, transaction) => {
+        const current = unique[transaction.merchant];
+        if (!current || transaction.date > current.date) {
+          unique[transaction.merchant] = transaction;
+        }
+        return unique;
+      }, {})
+  );
 
   const monthMap: Record<string, { spending: number; income: number }> = {};
   for (const t of txns) {

@@ -39,8 +39,12 @@ export default function ChatBox({ transactions, summary }: Props) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ question: q, transactions, summary }),
       });
-      const data = await res.json();
-      setMessages((m) => [...m, { role: "assistant", content: data.answer }]);
+      const data = (await res.json()) as { answer?: string; error?: string };
+      if (!res.ok) throw new Error(data.error || "Chat request failed");
+      setMessages((m) => [
+        ...m,
+        { role: "assistant", content: data.answer || "No answer was generated." },
+      ]);
     } catch {
       setMessages((m) => [...m, { role: "assistant", content: "Something went wrong. Please try again." }]);
     } finally {

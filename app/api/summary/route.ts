@@ -1,26 +1,32 @@
 import { NextRequest, NextResponse } from "next/server";
 import Anthropic from "@anthropic-ai/sdk";
-import type { NormalizedTransaction } from "@/lib/types";
+import type { NormalizedTransaction, SpendingSummary } from "@/lib/types";
 
-const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+interface SummaryRequest {
+  transactions: NormalizedTransaction[];
+  summary: SpendingSummary;
+}
 
 export async function POST(req: NextRequest) {
-  if (!process.env.ANTHROPIC_API_KEY) {
-    return NextResponse.json({ summary: generateFallbackSummary() });
+  let body: SummaryRequest;
+  try {
+    body = (await req.json()) as SummaryRequest;
+  } catch {
+    return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
   }
 
-  const body = await req.json();
-  const { transactions, summary } = body as {
-    transactions: NormalizedTransaction[];
-    summary: {
-      totalSpending: number;
-      totalIncome: number;
-      netCashFlow: number;
-      byCategory: Record<string, number>;
-      topMerchants: { merchant: string; total: number }[];
-      subscriptions: NormalizedTransaction[];
-    };
-  };
+  if (!body || typeof body !== "object") {
+    return NextResponse.json({ error: "Invalid spending data" }, { status: 400 });
+  }
+
+  const { transactions, summary } = body;
+  if (!Array.isArray(transactions) || !summary || !summary.byCategory) {
+    return NextResponse.json({ error: "Invalid spending data" }, { status: 400 });
+  }
+
+  if (!process.env.ANTHROPIC_API_KEY) {
+    return NextResponse.json({ summary: generateFallbackSummary(transactions, summary) });
+  }
 
   const topCategories = Object.entries(summary.byCategory)
     .sort((a, b) => b[1] - a[1])
@@ -50,16 +56,48 @@ Total transactions analyzed: ${transactions.length}
 
 Write specific, actionable insights. Mention specific numbers. Point out any concerning patterns or good habits. Suggest 1-2 concrete ways to save money. Be encouraging but honest.`;
 
-  const message = await client.messages.create({
-    model: "claude-haiku-4-5-20251001",
-    max_tokens: 600,
-    messages: [{ role: "user", content: prompt }],
-  });
+  try {
+    const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+    const message = await client.messages.create({
+      model: "claude-haiku-4-5-20251001",
+      max_tokens: 600,
+      messages: [{ role: "user", content: prompt }],
+    });
 
-  const text = message.content[0].type === "text" ? message.content[0].text : "";
-  return NextResponse.json({ summary: text });
+    const text = message.content[0]?.type === "text" ? message.content[0].text : "";
+    return NextResponse.json({
+      summary: text || generateFallbackSummary(transactions, summary),
+    });
+  } catch {
+    return NextResponse.json({ summary: generateFallbackSummary(transactions, summary) });
+  }
 }
 
-function generateFallbackSummary(): string {
-  return "Upload your bank statement and configure your ANTHROPIC_API_KEY to get AI-powered spending insights.";
+function generateFallbackSummary(
+  transactions: NormalizedTransaction[],
+  summary: SpendingSummary
+): string {
+  const topCategory = Object.entries(summary.byCategory).sort((a, b) => b[1] - a[1])[0];
+  const topMerchant = summary.topMerchants[0];
+  const subscriptionTotal = summary.subscriptions.reduce((sum, transaction) => sum + transaction.amount, 0);
+  const cashFlow = summary.netCashFlow >= 0
+    ? `You kept $${summary.netCashFlow.toFixed(2)} after spending.`
+    : `Spending exceeded income by $${Math.abs(summary.netCashFlow).toFixed(2)}.`;
+
+  const details = [
+    `Across ${transactions.length} transactions, you spent $${summary.totalSpending.toFixed(2)} and received $${summary.totalIncome.toFixed(2)} in income.`,
+    cashFlow,
+  ];
+
+  if (topCategory) {
+    details.push(`${topCategory[0]} was your largest category at $${topCategory[1].toFixed(2)}.`);
+  }
+  if (topMerchant) {
+    details.push(`Your top merchant was ${topMerchant.merchant} at $${topMerchant.total.toFixed(2)}.`);
+  }
+  if (summary.subscriptions.length > 0) {
+    details.push(`Detected subscriptions total $${subscriptionTotal.toFixed(2)} for the analyzed period.`);
+  }
+
+  return details.join(" ");
 }

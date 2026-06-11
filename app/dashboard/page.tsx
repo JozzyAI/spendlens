@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useSyncExternalStore } from "react";
 import { useRouter } from "next/navigation";
 import type { NormalizedTransaction } from "@/lib/types";
 import SummaryCards from "@/components/SummaryCards";
@@ -27,43 +27,78 @@ interface ParsedData {
   summary: SummaryData;
 }
 
+function subscribeToStorage() {
+  return () => {};
+}
+
+let cachedRaw: string | null = null;
+let cachedData: ParsedData | null = null;
+
+function getStoredData(): ParsedData | null {
+  const stored = sessionStorage.getItem("spendlens_data");
+  if (stored !== cachedRaw) {
+    cachedRaw = stored;
+    try {
+      cachedData = stored ? (JSON.parse(stored) as ParsedData) : null;
+    } catch {
+      sessionStorage.removeItem("spendlens_data");
+      cachedRaw = null;
+      cachedData = null;
+    }
+  }
+  return cachedData;
+}
+
+function getServerData(): ParsedData | null {
+  return null;
+}
+
 export default function DashboardPage() {
   const router = useRouter();
-  const [data, setData] = useState<ParsedData | null>(null);
+  const data = useSyncExternalStore(subscribeToStorage, getStoredData, getServerData);
   const [aiSummary, setAiSummary] = useState<string>("");
   const [loadingAI, setLoadingAI] = useState(false);
   const [activeTab, setActiveTab] = useState<"overview" | "transactions" | "chat">("overview");
 
   useEffect(() => {
-    const stored = sessionStorage.getItem("spendlens_data");
-    if (!stored) {
+    if (!data) {
       router.push("/");
+    }
+  }, [data, router]);
+
+  useEffect(() => {
+    if (!data) {
       return;
     }
-    const parsed = JSON.parse(stored) as ParsedData;
-    setData(parsed);
-    fetchAISummary(parsed);
-  }, [router]);
 
-  async function fetchAISummary(parsed: ParsedData) {
-    setLoadingAI(true);
-    try {
-      const res = await fetch("/api/summary", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          transactions: parsed.transactions,
-          summary: parsed.summary,
-        }),
-      });
-      const d = await res.json();
-      setAiSummary(d.summary);
-    } catch {
-      setAiSummary("Unable to generate AI summary at this time.");
-    } finally {
-      setLoadingAI(false);
+    let cancelled = false;
+
+    async function fetchAISummary() {
+      setLoadingAI(true);
+      try {
+        const res = await fetch("/api/summary", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            transactions: data!.transactions,
+            summary: data!.summary,
+          }),
+        });
+        const d = (await res.json()) as { summary?: string; error?: string };
+        if (!res.ok) throw new Error(d.error || "Summary request failed");
+        if (!cancelled) setAiSummary(d.summary || "No summary was generated.");
+      } catch {
+        if (!cancelled) setAiSummary("Unable to generate AI summary at this time.");
+      } finally {
+        if (!cancelled) setLoadingAI(false);
+      }
     }
-  }
+
+    fetchAISummary();
+    return () => {
+      cancelled = true;
+    };
+  }, [data]);
 
   if (!data) {
     return (

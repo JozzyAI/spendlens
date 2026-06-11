@@ -9,7 +9,6 @@ interface Props {
 
 export default function SubscriptionList({ subscriptions }: Props) {
   if (!subscriptions.length) return null;
-  const total = subscriptions.reduce((s, t) => s + t.amount, 0);
 
   const unique = Object.values(
     subscriptions.reduce(
@@ -20,6 +19,7 @@ export default function SubscriptionList({ subscriptions }: Props) {
       {} as Record<string, NormalizedTransaction>
     )
   );
+  const total = unique.reduce((sum, transaction) => sum + transaction.amount, 0);
 
   return (
     <div className="bg-white border rounded-xl p-4">
