@@ -21,8 +21,17 @@ export interface NormalizedTransaction {
   merchant: string;
   amount: number;
   type: TransactionType;
-  category: Category;
+  category?: Category;
   isRecurring: boolean;
+  source: TransactionSource;
+  duplicateKey: string;
+}
+
+export interface TransactionSource {
+  kind: "csv";
+  fileName: string;
+  rowNumber: number;
+  accountId?: string;
 }
 
 export interface SpendingSummary {
