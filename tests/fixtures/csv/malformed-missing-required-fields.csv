@@ -1,0 +1,3 @@
+Date,Description,Amount,Notes
+2026-06-09,SYNTHETIC Valid Control Row,-7.25,Synthetic row before malformed data
+, ,12.00,Intentionally missing required date and description
