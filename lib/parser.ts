@@ -1,5 +1,11 @@
 import type { NormalizedTransaction } from "./types";
 import { categorize, cleanMerchant, isLikelyRecurring } from "./categorize";
+import {
+  createDuplicateKey,
+  formatTransactionValidationError,
+  normalizedTransactionSchema,
+  transactionTypeForAmountColumn,
+} from "./transaction";
 
 interface RawRow {
   [key: string]: string;
@@ -14,17 +20,17 @@ function findColumn(row: RawRow, candidates: string[]): string | undefined {
   return undefined;
 }
 
-function parseAmount(raw: string | undefined): number {
-  if (!raw) return 0;
+function parseAmount(raw: string | undefined): number | undefined {
+  if (!raw?.trim()) return undefined;
   const trimmed = raw.trim();
   const negative = /^\(.*\)$/.test(trimmed) || /-$/.test(trimmed);
-  const amount = Number.parseFloat(trimmed.replace(/[()$,\s]/g, "").replace(/-$/, ""));
-  if (!Number.isFinite(amount)) return 0;
+  const amount = Number(trimmed.replace(/[()$,\s]/g, "").replace(/-$/, ""));
+  if (!Number.isFinite(amount)) return undefined;
   return negative ? -Math.abs(amount) : amount;
 }
 
 function parseDate(raw: string | undefined): string {
-  if (!raw) return new Date().toISOString().slice(0, 10);
+  if (!raw) return "";
   const value = raw.trim();
   const isoMatch = value.match(/^(\d{4})[-/](\d{1,2})[-/](\d{1,2})/);
   const usMatch = value.match(/^(\d{1,2})[/-](\d{1,2})[/-](\d{2}|\d{4})$/);
@@ -48,66 +54,108 @@ function uid(): string {
   return `txn-${Date.now()}-${idCounter++}`;
 }
 
-export function normalizeRows(rows: RawRow[]): NormalizedTransaction[] {
+export interface CsvSourceOptions {
+  fileName: string;
+  accountId?: string;
+}
+
+export function normalizeRows(
+  rows: RawRow[],
+  sourceOptions: CsvSourceOptions
+): NormalizedTransaction[] {
   if (!rows.length) return [];
 
   const sample = rows[0];
 
-  const dateCol = findColumn(sample, ["date", "transaction date", "posted date", "trans date", "posting date"]);
-  const descCol = findColumn(sample, ["description", "transaction description", "memo", "name", "merchant", "payee"]);
-  const amountCol = findColumn(sample, ["amount", "transaction amount", "debit amount", "credit amount", "charge amount"]);
+  const dateCol = findColumn(sample, [
+    "date",
+    "transaction date",
+    "posted date",
+    "trans date",
+    "posting date",
+  ]);
+  const descCol = findColumn(sample, [
+    "description",
+    "transaction description",
+    "memo",
+    "name",
+    "merchant",
+    "payee",
+  ]);
+  const amountCol = findColumn(sample, [
+    "amount",
+    "transaction amount",
+    "charge amount",
+  ]);
   const debitCol = findColumn(sample, ["debit", "debit amount", "withdrawal", "withdrawals"]);
   const creditCol = findColumn(sample, ["credit", "credit amount", "deposit", "deposits"]);
 
-  return rows
-    .filter((row) => {
-      const rawDesc = descCol ? row[descCol] : "";
-      return rawDesc && rawDesc.trim().length > 0;
-    })
-    .map((row): NormalizedTransaction => {
-      const rawDesc = descCol ? (row[descCol] || "") : Object.values(row).find((v) => v && v.length > 3) || "";
-      const merchant = cleanMerchant(rawDesc);
-      const category = categorize(rawDesc);
+  return rows.map((row, index): NormalizedTransaction => {
+    const rawDesc = descCol
+      ? row[descCol] || ""
+      : Object.values(row).find((value) => value && value.length > 3) || "";
+    const merchant = cleanMerchant(rawDesc);
+    const category = categorize(rawDesc);
 
-      let amount = 0;
-      let type: "debit" | "credit" = "debit";
+    let amount = 0;
+    let type: "debit" | "credit" = "debit";
 
-      if (amountCol) {
-        const raw = parseAmount(row[amountCol]);
-        if (raw < 0) {
-          amount = Math.abs(raw);
-          type = "debit";
-        } else {
-          amount = raw;
-          const cat = categorize(rawDesc);
-          type = cat === "Income" ? "credit" : "debit";
-        }
-      } else if (debitCol || creditCol) {
-        const debit = debitCol ? Math.abs(parseAmount(row[debitCol])) : 0;
-        const credit = creditCol ? Math.abs(parseAmount(row[creditCol])) : 0;
-        if (debit > 0) {
-          amount = debit;
-          type = "debit";
-        } else {
-          amount = credit;
-          type = "credit";
-        }
+    if (amountCol) {
+      const raw = parseAmount(row[amountCol]);
+      if (raw === undefined) {
+        amount = 0;
+      } else if (raw < 0) {
+        amount = Math.abs(raw);
+        type = "debit";
+      } else {
+        amount = raw;
+        type = transactionTypeForAmountColumn(raw, rawDesc);
       }
+    } else if (debitCol || creditCol) {
+      const debit = debitCol ? Math.abs(parseAmount(row[debitCol]) ?? 0) : 0;
+      const credit = creditCol ? Math.abs(parseAmount(row[creditCol]) ?? 0) : 0;
+      if (debit > 0) {
+        amount = debit;
+        type = "debit";
+      } else {
+        amount = credit;
+        type = "credit";
+      }
+    }
 
-      if (category === "Income") type = "credit";
+    if (category === "Income") type = "credit";
 
-      return {
-        id: uid(),
-        date: parseDate(dateCol ? row[dateCol] : undefined),
-        description: rawDesc.trim(),
-        merchant,
-        amount,
-        type,
-        category: type === "credit" && category === "Unknown" ? "Income" : category,
-        isRecurring: isLikelyRecurring(rawDesc, category),
-      };
-    })
-    .filter((t) => t.amount > 0);
+    const transaction = {
+      id: uid(),
+      date: parseDate(dateCol ? row[dateCol] : undefined),
+      description: rawDesc.trim(),
+      merchant,
+      amount,
+      type,
+      category:
+        type === "credit" && category === "Unknown"
+          ? ("Income" as const)
+          : category === "Unknown"
+            ? undefined
+            : category,
+      isRecurring: isLikelyRecurring(rawDesc, category),
+      source: {
+        kind: "csv" as const,
+        fileName: sourceOptions.fileName,
+        rowNumber: index + 2,
+        accountId: sourceOptions.accountId,
+      },
+      duplicateKey: "",
+    };
+    transaction.duplicateKey = createDuplicateKey(transaction);
+    const result = normalizedTransactionSchema.safeParse(transaction);
+    if (!result.success) {
+      throw new Error(
+        `CSV row ${index + 2}: ${formatTransactionValidationError(result.error)}`
+      );
+    }
+    return result.data;
+  });
 }
 
 export function computeSummary(txns: NormalizedTransaction[]) {
@@ -119,7 +167,8 @@ export function computeSummary(txns: NormalizedTransaction[]) {
 
   const byCategory: Record<string, number> = {};
   for (const t of spending) {
-    byCategory[t.category] = (byCategory[t.category] || 0) + t.amount;
+    const category = t.category ?? "Unknown";
+    byCategory[category] = (byCategory[category] || 0) + t.amount;
   }
 
   const merchantMap: Record<string, number> = {};

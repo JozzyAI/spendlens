@@ -40,7 +40,7 @@ export async function POST(req: NextRequest) {
     .slice(0, 100)
     .map(
       (t) =>
-        `${t.date} | ${t.merchant} | ${t.type === "debit" ? "-" : "+"}$${t.amount.toFixed(2)} | ${t.category}`
+        `${t.date} | ${t.merchant} | ${t.type === "debit" ? "-" : "+"}$${t.amount.toFixed(2)} | ${t.category ?? "Unknown"}`
     )
     .join("\n");
 

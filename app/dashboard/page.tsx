@@ -210,7 +210,7 @@ export default function DashboardPage() {
                   <div key={t.id} className="flex justify-between items-center py-2.5 text-sm">
                     <div>
                       <p className="font-medium text-gray-800">{t.merchant}</p>
-                      <p className="text-xs text-gray-400">{t.date} · {t.category}</p>
+                      <p className="text-xs text-gray-400">{t.date} · {t.category ?? "Unknown"}</p>
                     </div>
                     <span className="font-bold text-gray-900">${t.amount.toFixed(2)}</span>
                   </div>

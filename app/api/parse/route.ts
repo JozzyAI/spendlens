@@ -30,7 +30,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "CSV must include a header row" }, { status: 400 });
     }
 
-    const transactions = normalizeRows(data);
+    const transactions = normalizeRows(data, { fileName: file.name });
     if (transactions.length === 0) {
       return NextResponse.json(
         { error: "No transactions found. Include date, description, and amount columns." },
@@ -40,7 +40,11 @@ export async function POST(req: NextRequest) {
     const summary = computeSummary(transactions);
 
     return NextResponse.json({ transactions, summary });
-  } catch {
-    return NextResponse.json({ error: "Unable to read the uploaded CSV" }, { status: 400 });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Unknown validation error";
+    return NextResponse.json(
+      { error: `Unable to import CSV: ${message}` },
+      { status: 400 }
+    );
   }
 }

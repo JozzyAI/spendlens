@@ -29,10 +29,13 @@ export default function TransactionTable({ transactions }: Props) {
   const [page, setPage] = useState(0);
   const [search, setSearch] = useState("");
 
-  const categories = ["All", ...Array.from(new Set(transactions.map((t) => t.category)))] as (Category | "All")[];
+  const categories = [
+    "All",
+    ...Array.from(new Set(transactions.map((t) => t.category ?? "Unknown"))),
+  ] as (Category | "All")[];
 
   const filtered = transactions.filter((t) => {
-    const matchCat = filter === "All" || t.category === filter;
+    const matchCat = filter === "All" || (t.category ?? "Unknown") === filter;
     const matchSearch =
       !search ||
       t.merchant.toLowerCase().includes(search.toLowerCase()) ||
@@ -82,8 +85,8 @@ export default function TransactionTable({ transactions }: Props) {
                   {t.merchant}
                 </td>
                 <td className="py-2 pr-4">
-                  <span className={`text-xs px-2 py-0.5 rounded-full ${CATEGORY_COLORS[t.category]}`}>
-                    {t.category}
+                  <span className={`text-xs px-2 py-0.5 rounded-full ${CATEGORY_COLORS[t.category ?? "Unknown"]}`}>
+                    {t.category ?? "Unknown"}
                   </span>
                 </td>
                 <td className={`py-2 text-right font-medium ${t.type === "credit" ? "text-green-600" : "text-gray-800"}`}>
