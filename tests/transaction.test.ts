@@ -1,5 +1,8 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import test from "node:test";
+import Papa from "papaparse";
 import { normalizeRows } from "../lib/parser";
 import {
   createDuplicateKey,
@@ -7,6 +10,21 @@ import {
   validateNormalizedTransaction,
 } from "../lib/transaction";
 import type { NormalizedTransaction } from "../lib/types";
+
+function parseCsvFixture(fileName: string): Record<string, string>[] {
+  const csv = readFileSync(
+    join(process.cwd(), "tests", "fixtures", "csv", fileName),
+    "utf8"
+  );
+  const result = Papa.parse<Record<string, string>>(csv, {
+    header: true,
+    skipEmptyLines: true,
+    transformHeader: (header) => header.trim(),
+  });
+
+  assert.deepEqual(result.errors, []);
+  return result.data;
+}
 
 function validTransaction(
   overrides: Partial<NormalizedTransaction> = {}
@@ -203,5 +221,74 @@ test("reports a missing CSV amount as a required-field error", () => {
         { fileName: "checking.csv" }
       ),
     /CSV row 2: amount: must be greater than zero/
+  );
+});
+
+test("sample standard transaction fixture normalizes supported MVP CSV shape", () => {
+  const transactions = normalizeRows(
+    parseCsvFixture("standard-valid-transactions.csv"),
+    { fileName: "standard-valid-transactions.csv" }
+  );
+
+  assert.deepEqual(
+    transactions.map(({ date, type, amount }) => ({ date, type, amount })),
+    [
+      { date: "2026-06-01", type: "debit", amount: 42.19 },
+      { date: "2026-06-02", type: "credit", amount: 2500 },
+      { date: "2026-06-03", type: "debit", amount: 12.99 },
+      { date: "2026-06-04", type: "debit", amount: 88.4 },
+    ]
+  );
+});
+
+test("sample edge-case fixture covers quoted merchants and debit-credit columns", () => {
+  const transactions = normalizeRows(
+    parseCsvFixture("edge-case-transactions.csv"),
+    { fileName: "edge-case-transactions.csv" }
+  );
+
+  assert.deepEqual(
+    transactions.map(({ date, merchant, type, amount }) => ({
+      date,
+      merchant,
+      type,
+      amount,
+    })),
+    [
+      {
+        date: "2026-06-05",
+        merchant: "SYNTHETIC CAFE, DOWNTOWN",
+        type: "debit",
+        amount: 18.75,
+      },
+      {
+        date: "2026-06-06",
+        merchant: "FICTIONAL MARKET, STALL 12",
+        type: "debit",
+        amount: 64.2,
+      },
+      {
+        date: "2026-06-07",
+        merchant: "SYNTHETIC REFUND COUNTER",
+        type: "credit",
+        amount: 15,
+      },
+      {
+        date: "2026-06-08",
+        merchant: "SYNTHETIC DIRECT DEPOSIT",
+        type: "credit",
+        amount: 125.5,
+      },
+    ]
+  );
+});
+
+test("sample malformed fixture raises parser validation errors", () => {
+  assert.throws(
+    () =>
+      normalizeRows(parseCsvFixture("malformed-missing-required-fields.csv"), {
+        fileName: "malformed-missing-required-fields.csv",
+      }),
+    /CSV row 3: date: must use YYYY-MM-DD format; date: must be a valid calendar date; description: is required; merchant: is required/
   );
 });
