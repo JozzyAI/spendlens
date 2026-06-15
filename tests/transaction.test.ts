@@ -183,3 +183,25 @@ test("rejects invalid CSV dates instead of inventing a date", () => {
     /CSV row 2: date:/
   );
 });
+
+test("reports a missing CSV description as a required-field error", () => {
+  assert.throws(
+    () =>
+      normalizeRows(
+        [{ Date: "06/15/2026", Amount: "5.25" }],
+        { fileName: "checking.csv" }
+      ),
+    /CSV row 2: description: is required; merchant: is required/
+  );
+});
+
+test("reports a missing CSV amount as a required-field error", () => {
+  assert.throws(
+    () =>
+      normalizeRows(
+        [{ Date: "06/15/2026", Description: "Coffee Shop" }],
+        { fileName: "checking.csv" }
+      ),
+    /CSV row 2: amount: must be greater than zero/
+  );
+});

@@ -91,9 +91,7 @@ export function normalizeRows(
   const creditCol = findColumn(sample, ["credit", "credit amount", "deposit", "deposits"]);
 
   return rows.map((row, index): NormalizedTransaction => {
-    const rawDesc = descCol
-      ? row[descCol] || ""
-      : Object.values(row).find((value) => value && value.length > 3) || "";
+    const rawDesc = descCol ? row[descCol] || "" : "";
     const merchant = cleanMerchant(rawDesc);
     const category = categorize(rawDesc);
 
