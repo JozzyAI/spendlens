@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import test from "node:test";
 import Papa from "papaparse";
+import { parseCsvUpload } from "../lib/csvImport";
 import { normalizeRows } from "../lib/parser";
 import {
   createDuplicateKey,
@@ -209,7 +210,7 @@ test("reports a missing CSV description as a required-field error", () => {
         [{ Date: "06/15/2026", Amount: "5.25" }],
         { fileName: "checking.csv" }
       ),
-    /CSV row 2: description: is required; merchant: is required/
+    /CSV is missing required column\(s\): description/
   );
 });
 
@@ -220,7 +221,112 @@ test("reports a missing CSV amount as a required-field error", () => {
         [{ Date: "06/15/2026", Description: "Coffee Shop" }],
         { fileName: "checking.csv" }
       ),
-    /CSV row 2: amount: must be greater than zero/
+    /CSV is missing required column\(s\): amount/
+  );
+});
+
+test("parses a valid CSV upload into transactions and summary", () => {
+  const result = parseCsvUpload({
+    fileName: "checking.csv",
+    size: 74,
+    text: "Date,Description,Amount\n2026-06-01,Coffee Shop,-5.25\n2026-06-02,Payroll,100.00",
+  });
+
+  assert.deepEqual(
+    result.transactions.map(({ date, description, amount, type }) => ({
+      date,
+      description,
+      amount,
+      type,
+    })),
+    [
+      {
+        date: "2026-06-01",
+        description: "Coffee Shop",
+        amount: 5.25,
+        type: "debit",
+      },
+      {
+        date: "2026-06-02",
+        description: "Payroll",
+        amount: 100,
+        type: "credit",
+      },
+    ]
+  );
+  assert.equal(result.summary.totalSpending, 5.25);
+  assert.equal(result.summary.totalIncome, 100);
+});
+
+test("parses quoted CSV fields with commas", () => {
+  const result = parseCsvUpload({
+    fileName: "quoted.csv",
+    size: 62,
+    text: 'Date,Description,Amount\n2026-06-05,"Synthetic Cafe, Downtown",-18.75',
+  });
+
+  assert.equal(result.transactions[0].description, "Synthetic Cafe, Downtown");
+  assert.equal(result.transactions[0].merchant, "SYNTHETIC CAFE, DOWNTOWN");
+  assert.equal(result.transactions[0].amount, 18.75);
+});
+
+test("rejects CSV uploads with missing required columns before rows", () => {
+  assert.throws(
+    () =>
+      parseCsvUpload({
+        fileName: "missing-columns.csv",
+        size: 43,
+        text: "Description,Amount\nCoffee Shop,-5.25",
+      }),
+    /CSV is missing required column\(s\): date/
+  );
+});
+
+test("rejects malformed CSV rows with actionable row errors", () => {
+  assert.throws(
+    () =>
+      parseCsvUpload({
+        fileName: "bad-row.csv",
+        size: 65,
+        text: "Date,Description,Amount\n2026-06-01,Coffee Shop,-5.25,extra",
+      }),
+    /CSV row 2: row has more fields than the header/
+  );
+});
+
+test("rejects malformed transaction row values with row numbers", () => {
+  assert.throws(
+    () =>
+      parseCsvUpload({
+        fileName: "bad-amount.csv",
+        size: 57,
+        text: "Date,Description,Amount\n2026-06-01,Coffee Shop,not-money",
+      }),
+    /CSV row 2: amount: must be a supported monetary value/
+  );
+});
+
+test("rejects empty CSV uploads", () => {
+  assert.throws(
+    () =>
+      parseCsvUpload({
+        fileName: "empty.csv",
+        size: 0,
+        text: "",
+      }),
+    /CSV file is empty/
+  );
+});
+
+test("rejects non-CSV uploads", () => {
+  assert.throws(
+    () =>
+      parseCsvUpload({
+        fileName: "statement.txt",
+        size: 40,
+        text: "Date,Description,Amount\n2026-06-01,Coffee,-5.25",
+      }),
+    /Only CSV files are supported/
   );
 });
 

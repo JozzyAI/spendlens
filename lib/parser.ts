@@ -11,13 +11,91 @@ interface RawRow {
   [key: string]: string;
 }
 
-function findColumn(row: RawRow, candidates: string[]): string | undefined {
-  const keys = Object.keys(row);
+export class CsvImportError extends Error {
+  constructor(
+    message: string,
+    public readonly status = 400
+  ) {
+    super(message);
+    this.name = "CsvImportError";
+  }
+}
+
+const DATE_COLUMNS = [
+  "date",
+  "transaction date",
+  "posted date",
+  "trans date",
+  "posting date",
+];
+const DESCRIPTION_COLUMNS = [
+  "description",
+  "transaction description",
+  "memo",
+  "name",
+  "merchant",
+  "payee",
+];
+const AMOUNT_COLUMNS = ["amount", "transaction amount", "charge amount"];
+const DEBIT_COLUMNS = ["debit", "debit amount", "withdrawal", "withdrawals"];
+const CREDIT_COLUMNS = ["credit", "credit amount", "deposit", "deposits"];
+
+interface CsvColumnMapping {
+  dateCol: string;
+  descCol: string;
+  amountCol?: string;
+  debitCol?: string;
+  creditCol?: string;
+}
+
+function findColumn(fields: string[], candidates: string[]): string | undefined {
   for (const c of candidates) {
-    const match = keys.find((k) => k.toLowerCase().trim() === c.toLowerCase());
+    const match = fields.find((k) => k.toLowerCase().trim() === c.toLowerCase());
     if (match) return match;
   }
   return undefined;
+}
+
+function describeCandidates(candidates: string[]): string {
+  return candidates.map((candidate) => `"${candidate}"`).join(", ");
+}
+
+export function resolveCsvColumns(fields: string[] | undefined): CsvColumnMapping {
+  const normalizedFields = fields?.map((field) => field.trim()).filter(Boolean) ?? [];
+  if (normalizedFields.length === 0) {
+    throw new CsvImportError("CSV must include a header row.");
+  }
+
+  const dateCol = findColumn(normalizedFields, DATE_COLUMNS);
+  const descCol = findColumn(normalizedFields, DESCRIPTION_COLUMNS);
+  const amountCol = findColumn(normalizedFields, AMOUNT_COLUMNS);
+  const debitCol = findColumn(normalizedFields, DEBIT_COLUMNS);
+  const creditCol = findColumn(normalizedFields, CREDIT_COLUMNS);
+
+  const missing: string[] = [];
+  if (!dateCol) missing.push(`date (${describeCandidates(DATE_COLUMNS)})`);
+  if (!descCol) {
+    missing.push(`description (${describeCandidates(DESCRIPTION_COLUMNS)})`);
+  }
+  if (!amountCol && !debitCol && !creditCol) {
+    missing.push(
+      `amount (${describeCandidates([
+        ...AMOUNT_COLUMNS,
+        ...DEBIT_COLUMNS,
+        ...CREDIT_COLUMNS,
+      ])})`
+    );
+  }
+
+  if (missing.length > 0) {
+    throw new CsvImportError(`CSV is missing required column(s): ${missing.join("; ")}.`);
+  }
+
+  if (!dateCol || !descCol) {
+    throw new CsvImportError("CSV is missing required column(s).");
+  }
+
+  return { dateCol, descCol, amountCol, debitCol, creditCol };
 }
 
 function parseAmount(raw: string | undefined): number | undefined {
@@ -61,37 +139,16 @@ export interface CsvSourceOptions {
 
 export function normalizeRows(
   rows: RawRow[],
-  sourceOptions: CsvSourceOptions
+  sourceOptions: CsvSourceOptions,
+  columns?: CsvColumnMapping
 ): NormalizedTransaction[] {
   if (!rows.length) return [];
 
-  const sample = rows[0];
-
-  const dateCol = findColumn(sample, [
-    "date",
-    "transaction date",
-    "posted date",
-    "trans date",
-    "posting date",
-  ]);
-  const descCol = findColumn(sample, [
-    "description",
-    "transaction description",
-    "memo",
-    "name",
-    "merchant",
-    "payee",
-  ]);
-  const amountCol = findColumn(sample, [
-    "amount",
-    "transaction amount",
-    "charge amount",
-  ]);
-  const debitCol = findColumn(sample, ["debit", "debit amount", "withdrawal", "withdrawals"]);
-  const creditCol = findColumn(sample, ["credit", "credit amount", "deposit", "deposits"]);
+  const { dateCol, descCol, amountCol, debitCol, creditCol } =
+    columns ?? resolveCsvColumns(Object.keys(rows[0]));
 
   return rows.map((row, index): NormalizedTransaction => {
-    const rawDesc = descCol ? row[descCol] || "" : "";
+    const rawDesc = row[descCol] || "";
     const merchant = cleanMerchant(rawDesc);
     const category = categorize(rawDesc);
 
@@ -101,7 +158,9 @@ export function normalizeRows(
     if (amountCol) {
       const raw = parseAmount(row[amountCol]);
       if (raw === undefined) {
-        amount = 0;
+        throw new CsvImportError(
+          `CSV row ${index + 2}: amount: must be a supported monetary value.`
+        );
       } else if (raw < 0) {
         amount = Math.abs(raw);
         type = "debit";
@@ -110,8 +169,25 @@ export function normalizeRows(
         type = transactionTypeForAmountColumn(raw, rawDesc);
       }
     } else if (debitCol || creditCol) {
-      const debit = debitCol ? Math.abs(parseAmount(row[debitCol]) ?? 0) : 0;
-      const credit = creditCol ? Math.abs(parseAmount(row[creditCol]) ?? 0) : 0;
+      const rawDebit = debitCol ? row[debitCol] : undefined;
+      const rawCredit = creditCol ? row[creditCol] : undefined;
+      const debit = Math.abs(parseAmount(rawDebit) ?? 0);
+      const credit = Math.abs(parseAmount(rawCredit) ?? 0);
+      if (rawDebit?.trim() && debit === 0) {
+        throw new CsvImportError(
+          `CSV row ${index + 2}: debit: must be a supported monetary value.`
+        );
+      }
+      if (rawCredit?.trim() && credit === 0) {
+        throw new CsvImportError(
+          `CSV row ${index + 2}: credit: must be a supported monetary value.`
+        );
+      }
+      if (debit > 0 && credit > 0) {
+        throw new CsvImportError(
+          `CSV row ${index + 2}: provide either a debit or credit amount, not both.`
+        );
+      }
       if (debit > 0) {
         amount = debit;
         type = "debit";
@@ -148,7 +224,7 @@ export function normalizeRows(
     transaction.duplicateKey = createDuplicateKey(transaction);
     const result = normalizedTransactionSchema.safeParse(transaction);
     if (!result.success) {
-      throw new Error(
+      throw new CsvImportError(
         `CSV row ${index + 2}: ${formatTransactionValidationError(result.error)}`
       );
     }
