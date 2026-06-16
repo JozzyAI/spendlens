@@ -1,5 +1,5 @@
 import type { NormalizedTransaction } from "./types";
-import { categorize, cleanMerchant, isLikelyRecurring } from "./categorize";
+import { categorizeTransaction, cleanMerchant, isLikelyRecurring } from "./categorize";
 import {
   createDuplicateKey,
   formatTransactionValidationError,
@@ -150,7 +150,6 @@ export function normalizeRows(
   return rows.map((row, index): NormalizedTransaction => {
     const rawDesc = row[descCol] || "";
     const merchant = cleanMerchant(rawDesc);
-    const category = categorize(rawDesc);
 
     let amount = 0;
     let type: "debit" | "credit" = "debit";
@@ -197,7 +196,11 @@ export function normalizeRows(
       }
     }
 
-    if (category === "Income") type = "credit";
+    const category = categorizeTransaction({
+      description: rawDesc,
+      merchant,
+      type,
+    });
 
     const transaction = {
       id: uid(),
@@ -206,12 +209,7 @@ export function normalizeRows(
       merchant,
       amount,
       type,
-      category:
-        type === "credit" && category === "Unknown"
-          ? ("Income" as const)
-          : category === "Unknown"
-            ? undefined
-            : category,
+      category,
       isRecurring: isLikelyRecurring(rawDesc, category),
       source: {
         kind: "csv" as const,
