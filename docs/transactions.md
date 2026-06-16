@@ -14,7 +14,7 @@ files. Runtime validation is provided by `normalizedTransactionSchema` and
 | `merchant` | Yes | Non-empty cleaned merchant display name. |
 | `amount` | Yes | Positive finite USD major-unit number with at most two decimal places. |
 | `type` | Yes | `debit` or `credit`; see the sign convention below. |
-| `category` | No | A supported SpendLens category. Missing means uncategorized. |
+| `category` | No | A supported SpendLens category. CSV imports assign one using the local categorization rules below. |
 | `isRecurring` | Yes | Whether the transaction appears recurring. |
 | `source` | Yes | CSV file name, one-based data row number including the header offset, and optional account identity. |
 | `duplicateKey` | Yes | Deterministic serialization of the duplicate identity fields. |
@@ -31,6 +31,35 @@ For the current CSV adapter, a negative value in a generic amount column is a
 debit. Positive generic values are debits unless the description identifies an
 income deposit. When separate debit and credit columns exist, the populated
 column determines the type.
+
+## Rule-based categorization
+
+CSV imports categorize normalized transactions with the local rules exported as
+`DEFAULT_CATEGORIZATION_RULES` from `lib/categorize.ts`. The MVP rules are
+deterministic in-process configuration only; they do not call external services
+or require credentials.
+
+Each rule has:
+
+1. A stable `id`.
+2. A target `category`.
+3. One or more `matchers`.
+4. An optional `transactionType` filter of `debit` or `credit`.
+
+Matchers target either the preserved source `description` or the cleaned
+`merchant` field. String matchers trim leading and trailing whitespace, collapse
+internal whitespace, and compare case-insensitively by default. Supported string
+operators are `contains`, `equals`, and `startsWith`. `regex` matchers evaluate
+the supplied regular expression against the original field text.
+
+All matchers on a rule must match. When multiple rules match, the first rule in
+`DEFAULT_CATEGORIZATION_RULES` wins, so precedence is the array order. More
+specific rules should be placed before broader rules.
+
+If no rule matches, debit transactions receive the fallback category `Unknown`
+and credit transactions receive the fallback category `Income`. Categorization
+does not rewrite the original transaction description; imports preserve the
+trimmed source description used by duplicate identity.
 
 ## Duplicate identity
 

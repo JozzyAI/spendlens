@@ -3,6 +3,11 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import test from "node:test";
 import Papa from "papaparse";
+import {
+  CREDIT_FALLBACK_CATEGORY,
+  DEBIT_FALLBACK_CATEGORY,
+  categorizeTransaction,
+} from "../lib/categorize";
 import { parseCsvUpload } from "../lib/csvImport";
 import { normalizeRows } from "../lib/parser";
 import {
@@ -190,6 +195,127 @@ test("normalizes paired debit amount and credit amount columns", () => {
       { amount: 10, type: "credit" },
     ]
   );
+});
+
+test("categorization rules match normalized merchant text and descriptions", () => {
+  const category = categorizeTransaction(
+    {
+      description: "POS #4271 Northside Books",
+      merchant: "NORTHSIDE BOOKS",
+      type: "debit",
+    },
+    [
+      {
+        id: "local-bookshop",
+        category: "Shopping",
+        transactionType: "debit",
+        matchers: [
+          { field: "merchant", operator: "equals", value: "northside books" },
+          { field: "description", operator: "contains", value: "#4271" },
+        ],
+      },
+    ]
+  );
+
+  assert.equal(category, "Shopping");
+});
+
+test("categorization normalizes case and whitespace for string operators", () => {
+  const category = categorizeTransaction(
+    {
+      description: "  Monthly   Subscription  ",
+      merchant: "ACME SERVICES",
+      type: "debit",
+    },
+    [
+      {
+        id: "subscription-prefix",
+        category: "Subscriptions",
+        matchers: [
+          {
+            field: "description",
+            operator: "startsWith",
+            value: "monthly subscription",
+          },
+        ],
+      },
+    ]
+  );
+
+  assert.equal(category, "Subscriptions");
+});
+
+test("categorization uses deterministic first-match precedence", () => {
+  const rules = [
+    {
+      id: "amazon-prime-subscription",
+      category: "Subscriptions" as const,
+      matchers: [
+        { field: "description" as const, operator: "contains" as const, value: "amazon" },
+      ],
+    },
+    {
+      id: "amazon-shopping",
+      category: "Shopping" as const,
+      matchers: [
+        { field: "merchant" as const, operator: "contains" as const, value: "amazon" },
+      ],
+    },
+  ];
+
+  assert.equal(
+    categorizeTransaction(
+      {
+        description: "Amazon Prime Renewal",
+        merchant: "AMAZON",
+        type: "debit",
+      },
+      rules
+    ),
+    "Subscriptions"
+  );
+});
+
+test("categorization falls back for unmatched debits and credits", () => {
+  assert.equal(
+    categorizeTransaction({
+      description: "Unlisted Corner Store",
+      merchant: "UNLISTED CORNER STORE",
+      type: "debit",
+    }),
+    DEBIT_FALLBACK_CATEGORY
+  );
+  assert.equal(
+    categorizeTransaction({
+      description: "Miscellaneous Reversal",
+      merchant: "MISCELLANEOUS REVERSAL",
+      type: "credit",
+    }),
+    CREDIT_FALLBACK_CATEGORY
+  );
+});
+
+test("normalization keeps original descriptions unchanged when categorizing", () => {
+  const transactions = normalizeRows(
+    [
+      {
+        Date: "06/14/2026",
+        Description: "  sTaRbUcKs Store #1234  ",
+        Amount: "-5.25",
+      },
+      {
+        Date: "06/15/2026",
+        Description: "Unmatched Vendor",
+        Amount: "-10.00",
+      },
+    ],
+    { fileName: "checking.csv" }
+  );
+
+  assert.equal(transactions[0].description, "sTaRbUcKs Store #1234");
+  assert.equal(transactions[0].category, "Food & Dining");
+  assert.equal(transactions[1].description, "Unmatched Vendor");
+  assert.equal(transactions[1].category, "Unknown");
 });
 
 test("rejects invalid CSV dates instead of inventing a date", () => {
