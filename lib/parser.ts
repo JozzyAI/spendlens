@@ -1,4 +1,4 @@
-import type { NormalizedTransaction } from "./types";
+import type { MonthlySpendingSummary, NormalizedTransaction } from "./types";
 import { categorizeTransaction, cleanMerchant, isLikelyRecurring } from "./categorize";
 import {
   createDuplicateKey,
@@ -230,22 +230,30 @@ export function normalizeRows(
   });
 }
 
+function roundMoney(amount: number): number {
+  return Math.round((amount + Number.EPSILON) * 100) / 100;
+}
+
+function addMoney(current: number, amount: number): number {
+  return roundMoney(current + amount);
+}
+
 export function computeSummary(txns: NormalizedTransaction[]) {
   const spending = txns.filter((t) => t.type === "debit");
   const income = txns.filter((t) => t.type === "credit");
 
-  const totalSpending = spending.reduce((s, t) => s + t.amount, 0);
-  const totalIncome = income.reduce((s, t) => s + t.amount, 0);
+  const totalSpending = spending.reduce((s, t) => addMoney(s, t.amount), 0);
+  const totalIncome = income.reduce((s, t) => addMoney(s, t.amount), 0);
 
   const byCategory: Record<string, number> = {};
   for (const t of spending) {
     const category = t.category ?? "Unknown";
-    byCategory[category] = (byCategory[category] || 0) + t.amount;
+    byCategory[category] = addMoney(byCategory[category] || 0, t.amount);
   }
 
   const merchantMap: Record<string, number> = {};
   for (const t of spending) {
-    merchantMap[t.merchant] = (merchantMap[t.merchant] || 0) + t.amount;
+    merchantMap[t.merchant] = addMoney(merchantMap[t.merchant] || 0, t.amount);
   }
   const topMerchants = Object.entries(merchantMap)
     .sort((a, b) => b[1] - a[1])
@@ -265,25 +273,50 @@ export function computeSummary(txns: NormalizedTransaction[]) {
       }, {})
   );
 
-  const monthMap: Record<string, { spending: number; income: number }> = {};
+  const monthMap: Record<string, MonthlySpendingSummary> = {};
   for (const t of txns) {
     const month = t.date.slice(0, 7);
-    if (!monthMap[month]) monthMap[month] = { spending: 0, income: 0 };
-    if (t.type === "debit") monthMap[month].spending += t.amount;
-    else monthMap[month].income += t.amount;
+    monthMap[month] ??= {
+      month,
+      totalSpending: 0,
+      totalCredits: 0,
+      netAmount: 0,
+      byCategory: {},
+    };
+
+    const monthlySummary = monthMap[month];
+    if (t.type === "debit") {
+      const category = t.category ?? "Unknown";
+      monthlySummary.totalSpending = addMoney(monthlySummary.totalSpending, t.amount);
+      monthlySummary.byCategory[category] = addMoney(
+        monthlySummary.byCategory[category] || 0,
+        t.amount
+      );
+    } else {
+      monthlySummary.totalCredits = addMoney(monthlySummary.totalCredits, t.amount);
+    }
+    monthlySummary.netAmount = roundMoney(
+      monthlySummary.totalCredits - monthlySummary.totalSpending
+    );
   }
-  const monthlyTrend = Object.entries(monthMap)
-    .sort((a, b) => a[0].localeCompare(b[0]))
-    .map(([month, v]) => ({ month, ...v }));
+  const monthlySummaries = Object.values(monthMap).sort((a, b) =>
+    a.month.localeCompare(b.month)
+  );
+  const monthlyTrend = monthlySummaries.map((summary) => ({
+    month: summary.month,
+    spending: summary.totalSpending,
+    income: summary.totalCredits,
+  }));
 
   return {
     totalSpending,
     totalIncome,
-    netCashFlow: totalIncome - totalSpending,
+    netCashFlow: roundMoney(totalIncome - totalSpending),
     byCategory,
     topMerchants,
     topTransactions,
     subscriptions,
     monthlyTrend,
+    monthlySummaries,
   };
 }

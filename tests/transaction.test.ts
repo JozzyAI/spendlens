@@ -9,7 +9,7 @@ import {
   categorizeTransaction,
 } from "../lib/categorize";
 import { parseCsvUpload } from "../lib/csvImport";
-import { normalizeRows } from "../lib/parser";
+import { computeSummary, normalizeRows } from "../lib/parser";
 import {
   createDuplicateKey,
   normalizedTransactionSchema,
@@ -140,6 +140,95 @@ test("rejects signed normalized amounts because type carries debit or credit", (
     result.error.flatten().fieldErrors.amount?.join(" ") ?? "",
     /greater than zero/
   );
+});
+
+test("computes an empty spending summary for empty input", () => {
+  const summary = computeSummary([]);
+
+  assert.equal(summary.totalSpending, 0);
+  assert.equal(summary.totalIncome, 0);
+  assert.equal(summary.netCashFlow, 0);
+  assert.deepEqual(summary.byCategory, {});
+  assert.deepEqual(summary.monthlyTrend, []);
+  assert.deepEqual(summary.monthlySummaries, []);
+});
+
+test("computes monthly summaries across months, categories, credits, and boundaries", () => {
+  const transactions = [
+    validTransaction({
+      id: "txn-jan-rent",
+      date: "2026-01-01",
+      description: "January Rent",
+      merchant: "JANUARY RENT",
+      amount: 1200,
+      category: "Rent & Housing",
+      type: "debit",
+    }),
+    validTransaction({
+      id: "txn-jan-grocery",
+      date: "2026-01-31",
+      description: "January Market",
+      merchant: "JANUARY MARKET",
+      amount: 45.25,
+      category: "Groceries",
+      type: "debit",
+    }),
+    validTransaction({
+      id: "txn-jan-payroll",
+      date: "2026-01-15",
+      description: "January Payroll",
+      merchant: "JANUARY PAYROLL",
+      amount: 2500,
+      category: "Income",
+      type: "credit",
+    }),
+    validTransaction({
+      id: "txn-feb-uncategorized",
+      date: "2026-02-01",
+      description: "Mystery Vendor",
+      merchant: "MYSTERY VENDOR",
+      amount: 30,
+      type: "debit",
+      category: undefined,
+    }),
+    validTransaction({
+      id: "txn-feb-refund",
+      date: "2026-02-28",
+      description: "Refund Counter",
+      merchant: "REFUND COUNTER",
+      amount: 10,
+      category: "Income",
+      type: "credit",
+    }),
+  ];
+
+  const summary = computeSummary(transactions);
+
+  assert.deepEqual(summary.monthlySummaries, [
+    {
+      month: "2026-01",
+      totalSpending: 1245.25,
+      totalCredits: 2500,
+      netAmount: 1254.75,
+      byCategory: {
+        "Rent & Housing": 1200,
+        Groceries: 45.25,
+      },
+    },
+    {
+      month: "2026-02",
+      totalSpending: 30,
+      totalCredits: 10,
+      netAmount: -20,
+      byCategory: {
+        Unknown: 30,
+      },
+    },
+  ]);
+  assert.deepEqual(summary.monthlyTrend, [
+    { month: "2026-01", spending: 1245.25, income: 2500 },
+    { month: "2026-02", spending: 30, income: 10 },
+  ]);
 });
 
 test("normalizes debit and credit CSV rows with source metadata", () => {
