@@ -39,7 +39,7 @@ export async function POST(req: NextRequest) {
     .map((m) => `${m.merchant}: $${m.total.toFixed(2)}`)
     .join(", ");
 
-  const subTotal = summary.subscriptions.reduce((s, t) => s + t.amount, 0);
+  const subTotal = summary.subscriptions.reduce((s, t) => s + t.representativeAmount, 0);
   const subCount = summary.subscriptions.length;
 
   const prompt = `You are a personal finance analyst. Based on this spending data, write a concise, friendly, insightful 3-4 paragraph summary in English.
@@ -50,7 +50,7 @@ Data:
 - Net cash flow: $${summary.netCashFlow.toFixed(2)}
 - Top categories: ${topCategories}
 - Top merchants: ${topMerchants}
-- Recurring subscriptions: ${subCount} totaling $${subTotal.toFixed(2)}/month
+- Recurring candidates: ${subCount} totaling $${subTotal.toFixed(2)}/month
 
 Total transactions analyzed: ${transactions.length}
 
@@ -79,7 +79,10 @@ function generateFallbackSummary(
 ): string {
   const topCategory = Object.entries(summary.byCategory).sort((a, b) => b[1] - a[1])[0];
   const topMerchant = summary.topMerchants[0];
-  const subscriptionTotal = summary.subscriptions.reduce((sum, transaction) => sum + transaction.amount, 0);
+  const subscriptionTotal = summary.subscriptions.reduce(
+    (sum, candidate) => sum + candidate.representativeAmount,
+    0
+  );
   const cashFlow = summary.netCashFlow >= 0
     ? `You kept $${summary.netCashFlow.toFixed(2)} after spending.`
     : `Spending exceeded income by $${Math.abs(summary.netCashFlow).toFixed(2)}.`;
@@ -96,7 +99,7 @@ function generateFallbackSummary(
     details.push(`Your top merchant was ${topMerchant.merchant} at $${topMerchant.total.toFixed(2)}.`);
   }
   if (summary.subscriptions.length > 0) {
-    details.push(`Detected subscriptions total $${subscriptionTotal.toFixed(2)} for the analyzed period.`);
+    details.push(`Recurring payment candidates total about $${subscriptionTotal.toFixed(2)} per month.`);
   }
 
   return details.join(" ");

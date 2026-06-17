@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useSyncExternalStore } from "react";
 import { useRouter } from "next/navigation";
-import type { NormalizedTransaction } from "@/lib/types";
+import type { NormalizedTransaction, RecurringPaymentCandidate } from "@/lib/types";
 import SummaryCards from "@/components/SummaryCards";
 import { CategoryPieChart, MonthlyBarChart } from "@/components/SpendingCharts";
 import MerchantRanking from "@/components/MerchantRanking";
@@ -18,7 +18,7 @@ interface SummaryData {
   byCategory: Record<string, number>;
   topMerchants: { merchant: string; total: number }[];
   topTransactions: NormalizedTransaction[];
-  subscriptions: NormalizedTransaction[];
+  subscriptions: RecurringPaymentCandidate[];
   monthlyTrend: { month: string; spending: number; income: number }[];
 }
 
@@ -123,7 +123,10 @@ export default function DashboardPage() {
     byCategory: summary.byCategory,
     topMerchants: summary.topMerchants,
     subscriptionCount: summary.subscriptions.length,
-    subscriptionTotal: summary.subscriptions.reduce((s, t) => s + t.amount, 0),
+    subscriptionTotal: summary.subscriptions.reduce(
+      (s, t) => s + t.representativeAmount,
+      0
+    ),
   };
 
   return (

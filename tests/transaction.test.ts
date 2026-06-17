@@ -11,6 +11,10 @@ import {
 import { parseCsvUpload } from "../lib/csvImport";
 import { computeSummary, normalizeRows } from "../lib/parser";
 import {
+  DEFAULT_RECURRING_PAYMENT_OPTIONS,
+  detectRecurringPaymentCandidates,
+} from "../lib/recurring";
+import {
   createDuplicateKey,
   normalizedTransactionSchema,
   validateNormalizedTransaction,
@@ -229,6 +233,238 @@ test("computes monthly summaries across months, categories, credits, and boundar
     { month: "2026-01", spending: 1245.25, income: 2500 },
     { month: "2026-02", spending: 30, income: 10 },
   ]);
+});
+
+test("detects recurring merchant candidates across regular monthly charges", () => {
+  const transactions = [
+    validTransaction({
+      id: "stream-jan",
+      date: "2026-01-05",
+      description: "Streambox",
+      merchant: "STREAMBOX",
+      amount: 12.99,
+    }),
+    validTransaction({
+      id: "stream-feb",
+      date: "2026-02-05",
+      description: "Streambox",
+      merchant: "STREAMBOX",
+      amount: 12.99,
+    }),
+    validTransaction({
+      id: "stream-mar",
+      date: "2026-03-06",
+      description: "Streambox",
+      merchant: "STREAMBOX",
+      amount: 12.99,
+    }),
+    validTransaction({
+      id: "one-time",
+      date: "2026-03-10",
+      description: "Gadget Shop",
+      merchant: "GADGET SHOP",
+      amount: 199,
+    }),
+  ];
+
+  const candidates = detectRecurringPaymentCandidates(transactions);
+
+  assert.equal(candidates.length, 1);
+  assert.deepEqual(candidates[0], {
+    normalizedMerchant: "STREAMBOX",
+    representativeAmount: 12.99,
+    occurrenceCount: 3,
+    confidence: "high",
+    rationale:
+      "3 similar debit charges across 3 months; representative amount $12.99; amount tolerance +/-$2.00; date tolerance +/-6 days",
+    firstDate: "2026-01-05",
+    lastDate: "2026-03-06",
+  });
+});
+
+test("recurring detector accepts configured amount variation", () => {
+  const transactions = [
+    validTransaction({
+      id: "storage-jan",
+      date: "2026-01-12",
+      merchant: "CLOUD STORAGE",
+      amount: 20,
+    }),
+    validTransaction({
+      id: "storage-feb",
+      date: "2026-02-12",
+      merchant: "CLOUD STORAGE",
+      amount: 21.5,
+    }),
+    validTransaction({
+      id: "storage-mar",
+      date: "2026-03-13",
+      merchant: "CLOUD STORAGE",
+      amount: 19.75,
+    }),
+  ];
+
+  const candidates = detectRecurringPaymentCandidates(transactions, {
+    maxAmountVarianceDollars: 2,
+  });
+
+  assert.equal(candidates.length, 1);
+  assert.equal(candidates[0].normalizedMerchant, "CLOUD STORAGE");
+  assert.equal(candidates[0].representativeAmount, 20);
+  assert.equal(candidates[0].occurrenceCount, 3);
+  assert.equal(candidates[0].confidence, "high");
+});
+
+test("recurring detector marks skipped months as medium confidence candidates", () => {
+  const transactions = [
+    validTransaction({
+      id: "news-jan",
+      date: "2026-01-08",
+      merchant: "DAILY NEWS",
+      amount: 9.99,
+    }),
+    validTransaction({
+      id: "news-mar",
+      date: "2026-03-08",
+      merchant: "DAILY NEWS",
+      amount: 9.99,
+    }),
+    validTransaction({
+      id: "news-apr",
+      date: "2026-04-09",
+      merchant: "DAILY NEWS",
+      amount: 9.99,
+    }),
+  ];
+
+  const candidates = detectRecurringPaymentCandidates(transactions);
+
+  assert.equal(candidates.length, 1);
+  assert.equal(candidates[0].confidence, "medium");
+  assert.match(candidates[0].rationale, /1 skipped month/);
+});
+
+test("irregular repeated purchases are not high-confidence candidates", () => {
+  const transactions = [
+    validTransaction({
+      id: "hobby-jan",
+      date: "2026-01-03",
+      merchant: "HOBBY SUPPLY",
+      amount: 40,
+    }),
+    validTransaction({
+      id: "hobby-feb",
+      date: "2026-02-24",
+      merchant: "HOBBY SUPPLY",
+      amount: 41,
+    }),
+    validTransaction({
+      id: "hobby-apr",
+      date: "2026-04-11",
+      merchant: "HOBBY SUPPLY",
+      amount: 39.5,
+    }),
+  ];
+
+  const candidates = detectRecurringPaymentCandidates(transactions);
+
+  assert.equal(candidates.length, 1);
+  assert.equal(candidates[0].confidence, "low");
+  assert.match(candidates[0].rationale, /irregular interval/);
+});
+
+test("credits and refunds do not create recurring candidates", () => {
+  const transactions = [
+    validTransaction({
+      id: "refund-jan",
+      date: "2026-01-15",
+      merchant: "REFUND COUNTER",
+      amount: 15,
+      type: "credit",
+    }),
+    validTransaction({
+      id: "refund-feb",
+      date: "2026-02-15",
+      merchant: "REFUND COUNTER",
+      amount: 15,
+      type: "credit",
+    }),
+    validTransaction({
+      id: "refund-mar",
+      date: "2026-03-15",
+      merchant: "REFUND COUNTER",
+      amount: 15,
+      type: "credit",
+    }),
+  ];
+
+  assert.deepEqual(detectRecurringPaymentCandidates(transactions), []);
+});
+
+test("insufficient history does not create recurring candidates", () => {
+  const transactions = [
+    validTransaction({
+      id: "music-jan",
+      date: "2026-01-01",
+      merchant: "MUSIC APP",
+      amount: 10.99,
+    }),
+    validTransaction({
+      id: "music-feb",
+      date: "2026-02-01",
+      merchant: "MUSIC APP",
+      amount: 10.99,
+    }),
+  ];
+
+  const candidates = detectRecurringPaymentCandidates(transactions);
+
+  assert.equal(DEFAULT_RECURRING_PAYMENT_OPTIONS.minOccurrences, 3);
+  assert.deepEqual(candidates, []);
+});
+
+test("spending summaries include recurring candidates instead of category-only matches", () => {
+  const transactions = [
+    validTransaction({
+      id: "membership-jan",
+      date: "2026-01-02",
+      merchant: "FIT CLUB",
+      amount: 35,
+      category: "Subscriptions",
+      isRecurring: true,
+    }),
+    validTransaction({
+      id: "membership-feb",
+      date: "2026-02-02",
+      merchant: "FIT CLUB",
+      amount: 35,
+      category: "Subscriptions",
+      isRecurring: true,
+    }),
+    validTransaction({
+      id: "single-subscription-keyword",
+      date: "2026-02-20",
+      merchant: "ONE TIME SOFTWARE",
+      amount: 99,
+      category: "Subscriptions",
+      isRecurring: true,
+    }),
+    validTransaction({
+      id: "membership-mar",
+      date: "2026-03-02",
+      merchant: "FIT CLUB",
+      amount: 35,
+      category: "Subscriptions",
+      isRecurring: true,
+    }),
+  ];
+
+  const summary = computeSummary(transactions);
+
+  assert.deepEqual(
+    summary.subscriptions.map((candidate) => candidate.normalizedMerchant),
+    ["FIT CLUB"]
+  );
 });
 
 test("normalizes debit and credit CSV rows with source metadata", () => {
