@@ -43,5 +43,14 @@ export interface SpendingSummary {
   topTransactions: NormalizedTransaction[];
   subscriptions: NormalizedTransaction[];
   monthlyTrend: { month: string; spending: number; income: number }[];
+  monthlySummaries: MonthlySpendingSummary[];
   aiSummary?: string;
+}
+
+export interface MonthlySpendingSummary {
+  month: string;
+  totalSpending: number;
+  totalCredits: number;
+  netAmount: number;
+  byCategory: Record<string, number>;
 }
