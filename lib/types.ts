@@ -41,10 +41,20 @@ export interface SpendingSummary {
   byCategory: Record<string, number>;
   topMerchants: { merchant: string; total: number }[];
   topTransactions: NormalizedTransaction[];
-  subscriptions: NormalizedTransaction[];
+  subscriptions: RecurringPaymentCandidate[];
   monthlyTrend: { month: string; spending: number; income: number }[];
   monthlySummaries: MonthlySpendingSummary[];
   aiSummary?: string;
+}
+
+export interface RecurringPaymentCandidate {
+  normalizedMerchant: string;
+  representativeAmount: number;
+  occurrenceCount: number;
+  confidence: "high" | "medium" | "low";
+  rationale: string;
+  firstDate: string;
+  lastDate: string;
 }
 
 export interface MonthlySpendingSummary {

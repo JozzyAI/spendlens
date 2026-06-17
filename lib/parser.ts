@@ -6,6 +6,7 @@ import {
   normalizedTransactionSchema,
   transactionTypeForAmountColumn,
 } from "./transaction";
+import { detectRecurringPaymentCandidates } from "./recurring";
 
 interface RawRow {
   [key: string]: string;
@@ -261,17 +262,7 @@ export function computeSummary(txns: NormalizedTransaction[]) {
     .map(([merchant, total]) => ({ merchant, total }));
 
   const topTransactions = [...spending].sort((a, b) => b.amount - a.amount).slice(0, 10);
-  const subscriptions = Object.values(
-    txns
-      .filter((t) => t.isRecurring && t.type === "debit")
-      .reduce<Record<string, NormalizedTransaction>>((unique, transaction) => {
-        const current = unique[transaction.merchant];
-        if (!current || transaction.date > current.date) {
-          unique[transaction.merchant] = transaction;
-        }
-        return unique;
-      }, {})
-  );
+  const subscriptions = detectRecurringPaymentCandidates(txns);
 
   const monthMap: Record<string, MonthlySpendingSummary> = {};
   for (const t of txns) {
