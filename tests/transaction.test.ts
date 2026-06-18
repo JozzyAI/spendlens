@@ -22,10 +22,7 @@ import {
 import type { NormalizedTransaction } from "../lib/types";
 
 function parseCsvFixture(fileName: string): Record<string, string>[] {
-  const csv = readFileSync(
-    join(process.cwd(), "tests", "fixtures", "csv", fileName),
-    "utf8"
-  );
+  const csv = readCsvFixture(fileName);
   const result = Papa.parse<Record<string, string>>(csv, {
     header: true,
     skipEmptyLines: true,
@@ -34,6 +31,13 @@ function parseCsvFixture(fileName: string): Record<string, string>[] {
 
   assert.deepEqual(result.errors, []);
   return result.data;
+}
+
+function readCsvFixture(fileName: string): string {
+  return readFileSync(
+    join(process.cwd(), "tests", "fixtures", "csv", fileName),
+    "utf8"
+  );
 }
 
 function validTransaction(
@@ -709,6 +713,220 @@ test("parses a valid CSV upload into transactions and summary", () => {
   assert.equal(result.summary.totalIncome, 100);
 });
 
+test("processes the MVP CSV fixture through the complete ingestion workflow", () => {
+  const fileName = "mvp-workflow-transactions.csv";
+  const text = readCsvFixture(fileName);
+  const result = parseCsvUpload({
+    fileName,
+    size: Buffer.byteLength(text, "utf8"),
+    text,
+    accountId: "test-checking",
+  });
+
+  assert.equal(result.transactions.length, 11);
+  assert.deepEqual(
+    result.transactions.map(
+      ({ date, description, merchant, amount, type, category, isRecurring, source }) => ({
+        date,
+        description,
+        merchant,
+        amount,
+        type,
+        category,
+        isRecurring,
+        rowNumber: source.rowNumber,
+        accountId: source.accountId,
+      })
+    ),
+    [
+      {
+        date: "2026-01-01",
+        description: "SYNTHETIC Payroll Deposit",
+        merchant: "SYNTHETIC PAYROLL DEPOSIT",
+        amount: 3000,
+        type: "credit",
+        category: "Income",
+        isRecurring: false,
+        rowNumber: 2,
+        accountId: "test-checking",
+      },
+      {
+        date: "2026-01-02",
+        description: "SYNTHETIC Rent Payment",
+        merchant: "SYNTHETIC RENT PAYMENT",
+        amount: 1200,
+        type: "debit",
+        category: "Rent & Housing",
+        isRecurring: false,
+        rowNumber: 3,
+        accountId: "test-checking",
+      },
+      {
+        date: "2026-01-05",
+        description: "Netflix Monthly Plan",
+        merchant: "NETFLIX MONTHLY PLAN",
+        amount: 15.99,
+        type: "debit",
+        category: "Subscriptions",
+        isRecurring: true,
+        rowNumber: 4,
+        accountId: "test-checking",
+      },
+      {
+        date: "2026-01-12",
+        description: "Whole Foods Market 1234",
+        merchant: "WHOLE FOODS MARKET",
+        amount: 86.45,
+        type: "debit",
+        category: "Groceries",
+        isRecurring: false,
+        rowNumber: 5,
+        accountId: "test-checking",
+      },
+      {
+        date: "2026-02-01",
+        description: "SYNTHETIC Payroll Deposit",
+        merchant: "SYNTHETIC PAYROLL DEPOSIT",
+        amount: 3000,
+        type: "credit",
+        category: "Income",
+        isRecurring: false,
+        rowNumber: 6,
+        accountId: "test-checking",
+      },
+      {
+        date: "2026-02-05",
+        description: "Netflix Monthly Plan",
+        merchant: "NETFLIX MONTHLY PLAN",
+        amount: 15.99,
+        type: "debit",
+        category: "Subscriptions",
+        isRecurring: true,
+        rowNumber: 7,
+        accountId: "test-checking",
+      },
+      {
+        date: "2026-02-10",
+        description: "Shell Gas Station 4432",
+        merchant: "SHELL GAS STATION",
+        amount: 42.5,
+        type: "debit",
+        category: "Transportation",
+        isRecurring: false,
+        rowNumber: 8,
+        accountId: "test-checking",
+      },
+      {
+        date: "2026-02-20",
+        description: "Comcast Internet Bill",
+        merchant: "COMCAST INTERNET BILL",
+        amount: 79.99,
+        type: "debit",
+        category: "Utilities",
+        isRecurring: false,
+        rowNumber: 9,
+        accountId: "test-checking",
+      },
+      {
+        date: "2026-03-01",
+        description: "SYNTHETIC Payroll Deposit",
+        merchant: "SYNTHETIC PAYROLL DEPOSIT",
+        amount: 3000,
+        type: "credit",
+        category: "Income",
+        isRecurring: false,
+        rowNumber: 10,
+        accountId: "test-checking",
+      },
+      {
+        date: "2026-03-06",
+        description: "Netflix Monthly Plan",
+        merchant: "NETFLIX MONTHLY PLAN",
+        amount: 15.99,
+        type: "debit",
+        category: "Subscriptions",
+        isRecurring: true,
+        rowNumber: 11,
+        accountId: "test-checking",
+      },
+      {
+        date: "2026-03-14",
+        description: "Target Household Supplies",
+        merchant: "TARGET HOUSEHOLD SUPPLIES",
+        amount: 64.2,
+        type: "debit",
+        category: "Shopping",
+        isRecurring: false,
+        rowNumber: 12,
+        accountId: "test-checking",
+      },
+    ]
+  );
+
+  assert.equal(result.summary.totalSpending, 1521.11);
+  assert.equal(result.summary.totalIncome, 9000);
+  assert.equal(result.summary.netCashFlow, 7478.89);
+  assert.deepEqual(result.summary.byCategory, {
+    "Rent & Housing": 1200,
+    Subscriptions: 47.97,
+    Groceries: 86.45,
+    Transportation: 42.5,
+    Utilities: 79.99,
+    Shopping: 64.2,
+  });
+  assert.deepEqual(result.summary.monthlySummaries, [
+    {
+      month: "2026-01",
+      totalSpending: 1302.44,
+      totalCredits: 3000,
+      netAmount: 1697.56,
+      byCategory: {
+        "Rent & Housing": 1200,
+        Subscriptions: 15.99,
+        Groceries: 86.45,
+      },
+    },
+    {
+      month: "2026-02",
+      totalSpending: 138.48,
+      totalCredits: 3000,
+      netAmount: 2861.52,
+      byCategory: {
+        Subscriptions: 15.99,
+        Transportation: 42.5,
+        Utilities: 79.99,
+      },
+    },
+    {
+      month: "2026-03",
+      totalSpending: 80.19,
+      totalCredits: 3000,
+      netAmount: 2919.81,
+      byCategory: {
+        Subscriptions: 15.99,
+        Shopping: 64.2,
+      },
+    },
+  ]);
+  assert.deepEqual(result.summary.monthlyTrend, [
+    { month: "2026-01", spending: 1302.44, income: 3000 },
+    { month: "2026-02", spending: 138.48, income: 3000 },
+    { month: "2026-03", spending: 80.19, income: 3000 },
+  ]);
+  assert.deepEqual(result.summary.subscriptions, [
+    {
+      normalizedMerchant: "NETFLIX MONTHLY PLAN",
+      representativeAmount: 15.99,
+      occurrenceCount: 3,
+      confidence: "high",
+      rationale:
+        "3 similar debit charges across 3 months; representative amount $15.99; amount tolerance +/-$2.00; date tolerance +/-6 days",
+      firstDate: "2026-01-05",
+      lastDate: "2026-03-06",
+    },
+  ]);
+});
+
 test("parses quoted CSV fields with commas", () => {
   const result = parseCsvUpload({
     fileName: "quoted.csv",
@@ -843,8 +1061,13 @@ test("sample edge-case fixture covers quoted merchants and debit-credit columns"
 test("sample malformed fixture raises parser validation errors", () => {
   assert.throws(
     () =>
-      normalizeRows(parseCsvFixture("malformed-missing-required-fields.csv"), {
+      parseCsvUpload({
         fileName: "malformed-missing-required-fields.csv",
+        size: Buffer.byteLength(
+          readCsvFixture("malformed-missing-required-fields.csv"),
+          "utf8"
+        ),
+        text: readCsvFixture("malformed-missing-required-fields.csv"),
       }),
     /CSV row 3: date: must use YYYY-MM-DD format; date: must be a valid calendar date; description: is required; merchant: is required/
   );

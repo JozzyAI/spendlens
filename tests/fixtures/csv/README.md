@@ -14,3 +14,6 @@ credentials, account numbers, card numbers, or production exports.
   multiple supported date formats.
 - `malformed-missing-required-fields.csv` - A parser error fixture. The second
   data row intentionally omits required date and description values.
+- `mvp-workflow-transactions.csv` - A complete MVP workflow sample spanning
+  parsing, normalization, categorization, monthly summaries, and recurring
+  payment detection across three months.
